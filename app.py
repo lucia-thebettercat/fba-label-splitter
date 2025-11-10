@@ -139,10 +139,13 @@ st.title("📦 FBA & Shipping Labels Splitter")
 st.write("Upload the single alternating-labels PDF from Amazon (FBA label, then shipping label, etc.). We'll split it into two PDFs and generate a CSV summary.")
 
 with st.expander("Options", expanded=False):
-    assume_fba_is_odd = st.checkbox("Assume FBA labels are on odd pages (1,3,5,...)", value=True)
+    assume_fba_is_odd = st.checkbox("Assume FBA labels are on odd pages (1,3,5,...)
+(FBA, then Shipping)", value=True)
     st.caption("Disable this if your input starts with a shipping label instead.")
+    custom_title = st.text_input("Summary title", value="Amazon order")
+    show_ids = st.multiselect("Show IDs in lines", options=["FNSKU","ASIN","Tracking","Shipment ID"], default=["ASIN"])  # which identifiers to include per line
 
-uploaded = st.file_uploader("Upload combined PDF", type=["pdf"]) 
+uploaded = st.file_uploader("Upload combined PDF", type=["pdf"])  
 
 if uploaded is not None:
     data = uploaded.read()
@@ -161,16 +164,67 @@ if uploaded is not None:
     # Build summary
     summary_rows = build_summary(fba_texts, ship_texts)
 
-    # Downloads
+    # ----- Build human-readable text summary -----
+    def choose_id(row):
+        # pick preferred identifier(s) to show
+        parts = []
+        if "FNSKU" in show_ids and row.fnsku:
+            parts.append(row.fnsku)
+        if "ASIN" in show_ids and row.asin:
+            parts.append(row.asin)
+        if "Tracking" in show_ids and row.tracking:
+            parts.append(row.tracking)
+        if "Shipment ID" in show_ids and row.shipment_id:
+            parts.append(row.shipment_id)
+        return " / ".join(parts)
+
+    # choose the key used for grouping consecutive boxes (SKU preferred, else FNSKU, else ASIN)
+    def label_key(row):
+        return row.sku or row.fnsku or row.asin or "(Unknown)"
+
+    # Group consecutive boxes with the same key
+    groups = []  # list of (start_idx, end_idx, key, id_text)
+    if summary_rows:
+        start = 1
+        prev_key = label_key(summary_rows[0])
+        prev_id = choose_id(summary_rows[0])
+        for i in range(1, len(summary_rows)):
+            k = label_key(summary_rows[i])
+            idt = choose_id(summary_rows[i])
+            if k != prev_key or idt != prev_id:
+                groups.append((start, i, prev_key, prev_id))
+                start = i + 1
+                prev_key, prev_id = k, idt
+        groups.append((start, len(summary_rows), prev_key, prev_id))
+
+    total_boxes = summary_rows[-1].total_boxes if summary_rows and summary_rows[-1].total_boxes else len(summary_rows)
+
+    lines = [f"{custom_title}. Total of {total_boxes} Boxes.", "", "Order:"]
+    for (a,b,key,ids) in groups:
+        if a==b:
+            rng = f"Box {a}:"
+        else:
+            rng = f"Box {a}-{b}:"
+        suffix = f" / {ids}" if ids else ""
+        # try to extract multiplier like '15x' from SKU if present at start; otherwise omit
+        lines.append(f"{rng} {key}{suffix}")
+    text_summary = "
+".join(lines)
+
     st.subheader("Downloads")
     st.download_button("⬇️ Download FBA labels PDF", data=fba_pdf, file_name="fba_labels.pdf", mime="application/pdf")
     st.download_button("⬇️ Download Shipping labels PDF", data=ship_pdf, file_name="shipping_labels.pdf", mime="application/pdf")
 
     if summary_rows:
+        # Offer CSV (still available) and Text summary
         csv_bytes = to_csv_bytes(summary_rows)
         st.download_button("⬇️ Download summary CSV", data=csv_bytes, file_name="labels_summary.csv", mime="text/csv")
 
-        st.subheader("Preview")
+        st.subheader("Text summary")
+        st.code(text_summary)
+        st.download_button("⬇️ Download summary TXT", data=text_summary.encode("utf-8"), file_name="labels_summary.txt", mime="text/plain")
+
+        st.subheader("Raw data preview")
         st.dataframe([asdict(r) for r in summary_rows])
 
     st.info("If some fields come out empty, it's usually because the label is rendered as an image and doesn't contain extractable text. You can still use the odd/even PDFs. For OCR add-ons, see the notes in the sidebar.")
