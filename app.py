@@ -139,13 +139,12 @@ st.title("📦 FBA & Shipping Labels Splitter")
 st.write("Upload the single alternating-labels PDF from Amazon (FBA label, then shipping label, etc.). We'll split it into two PDFs and generate a CSV summary.")
 
 with st.expander("Options", expanded=False):
-    assume_fba_is_odd = st.checkbox("Assume FBA labels are on odd pages (1,3,5,...)
-(FBA, then Shipping)", value=True)
+    assume_fba_is_odd = st.checkbox("Assume FBA labels are on odd pages (1,3,5,...) (FBA, then Shipping)", value=True)
     st.caption("Disable this if your input starts with a shipping label instead.")
     custom_title = st.text_input("Summary title", value="Amazon order")
     show_ids = st.multiselect("Show IDs in lines", options=["FNSKU","ASIN","Tracking","Shipment ID"], default=["ASIN"])  # which identifiers to include per line
 
-uploaded = st.file_uploader("Upload combined PDF", type=["pdf"])  
+uploaded = st.file_uploader("Upload combined PDF", type=["pdf"])
 
 if uploaded is not None:
     data = uploaded.read()
