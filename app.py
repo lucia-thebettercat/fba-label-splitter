@@ -17,16 +17,16 @@ class LabelInfo:
     sku: Optional[str]
     tracking: Optional[str]
 
+
 FNSKU_RE = re.compile(r"\bX[A-Z0-9]{10}\b")
 ASIN_RE = re.compile(r"\bB[0-9A-Z]{9}\b")
 SHIPMENT_RE = re.compile(r"\bFBA[ A-]*[A-Z0-9]{6,}\b")
 CARTON_RE = re.compile(r"(\d+)\s*/?\s*of\s*/?\s*(\d+)", re.IGNORECASE)
 SKU_LINE_RE = re.compile(r"(?:(?:MSKU|SKU)\s*[:#-]?\s*)([A-Za-z0-9._\-]+)")
-# Common tracking formats (DHL, UPS, FedEx)
 TRACKING_RES = [
-    re.compile(r"\bJJD[0-9A-Z]{10,}\b", re.IGNORECASE),   # DHL JJD...
-    re.compile(r"\b\d{10,12}\b"),                         # 10-12 digits (DHL/others)
-    re.compile(r"\b1Z[0-9A-Z]{16}\b", re.IGNORECASE),     # UPS 1Z...
+    re.compile(r"\bJJD[0-9A-Z]{10,}\b", re.IGNORECASE),  # DHL JJD...
+    re.compile(r"\b\d{10,12}\b"),                        # 10-12 digits
+    re.compile(r"\b1Z[0-9A-Z]{16}\b", re.IGNORECASE),    # UPS 1Z...
     re.compile(r"\b\d{12,15}\b"),                        # fallback digits
 ]
 
@@ -39,7 +39,6 @@ def split_pdf_odd_even(src_bytes: bytes) -> Tuple[bytes, bytes, List[str]]:
     for i, page in enumerate(reader.pages):
         text = page.extract_text() or ""
         texts.append(text)
-        # 0-based i: odd pages are 1,3,5... -> indices 0,2,4...
         if (i % 2) == 0:
             odd_writer.add_page(page)
         else:
@@ -74,14 +73,10 @@ def extract_fba_fields(text: str) -> Tuple[Optional[str], Optional[str], Optiona
         except Exception:
             carton = None
 
-    # SKU can be varied; try explicit label first
     sku = None
     m2 = SKU_LINE_RE.search(text)
     if m2:
         sku = m2.group(1)
-    else:
-        # Weak fallback: look for a likely SKU-like token near FNSKU/ASIN lines
-        pass
 
     return fnsku, asin, sku, carton
 
@@ -125,7 +120,7 @@ def to_csv_bytes(rows: List[LabelInfo]) -> bytes:
     import csv
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=list(asdict(rows[0]).keys()) if rows else [
-        "box_index","total_boxes","shipment_id","fnsku","asin","sku","tracking"
+        "box_index", "total_boxes", "shipment_id", "fnsku", "asin", "sku", "tracking"
     ])
     writer.writeheader()
     for r in rows:
@@ -136,13 +131,14 @@ def to_csv_bytes(rows: List[LabelInfo]) -> bytes:
 # ---------- UI ----------
 st.set_page_config(page_title="FBA & Shipping Labels Splitter", page_icon="📦", layout="centered")
 st.title("📦 FBA & Shipping Labels Splitter")
-st.write("Upload the single alternating-labels PDF from Amazon (FBA label, then shipping label, etc.). We'll split it into two PDFs and generate a CSV summary.")
+st.write("Upload the single alternating-labels PDF from Amazon (FBA label, then shipping label, etc.). We'll split it into two PDFs and generate a summary.")
+
 
 with st.expander("Options", expanded=False):
     assume_fba_is_odd = st.checkbox("Assume FBA labels are on odd pages (1,3,5,...) (FBA, then Shipping)", value=True)
     st.caption("Disable this if your input starts with a shipping label instead.")
     custom_title = st.text_input("Summary title", value="Amazon order")
-    show_ids = st.multiselect("Show IDs in lines", options=["FNSKU","ASIN","Tracking","Shipment ID"], default=["ASIN"])  # which identifiers to include per line
+    show_ids = st.multiselect("Show IDs in lines", options=["FNSKU", "ASIN", "Tracking", "Shipment ID"], default=["ASIN"])
 
 uploaded = st.file_uploader("Upload combined PDF", type=["pdf"])
 
@@ -150,7 +146,6 @@ if uploaded is not None:
     data = uploaded.read()
     odd_bytes, even_bytes, texts = split_pdf_odd_even(data)
 
-    # Decide which is FBA/shipping depending on the first page assumption
     if assume_fba_is_odd:
         fba_pdf, ship_pdf = odd_bytes, even_bytes
         fba_texts = [t for i, t in enumerate(texts) if i % 2 == 0]
@@ -165,7 +160,6 @@ if uploaded is not None:
 
     # ----- Build human-readable text summary -----
     def choose_id(row):
-        # pick preferred identifier(s) to show
         parts = []
         if "FNSKU" in show_ids and row.fnsku:
             parts.append(row.fnsku)
@@ -177,12 +171,10 @@ if uploaded is not None:
             parts.append(row.shipment_id)
         return " / ".join(parts)
 
-    # choose the key used for grouping consecutive boxes (SKU preferred, else FNSKU, else ASIN)
     def label_key(row):
         return row.sku or row.fnsku or row.asin or "(Unknown)"
 
-    # Group consecutive boxes with the same key
-    groups = []  # list of (start_idx, end_idx, key, id_text)
+    groups = []
     if summary_rows:
         start = 1
         prev_key = label_key(summary_rows[0])
@@ -199,23 +191,20 @@ if uploaded is not None:
     total_boxes = summary_rows[-1].total_boxes if summary_rows and summary_rows[-1].total_boxes else len(summary_rows)
 
     lines = [f"{custom_title}. Total of {total_boxes} Boxes.", "", "Order:"]
-    for (a,b,key,ids) in groups:
-        if a==b:
+    for (a, b, key, ids) in groups:
+        if a == b:
             rng = f"Box {a}:"
         else:
             rng = f"Box {a}-{b}:"
         suffix = f" / {ids}" if ids else ""
-        # try to extract multiplier like '15x' from SKU if present at start; otherwise omit
         lines.append(f"{rng} {key}{suffix}")
-    text_summary = "
-".join(lines)
+    text_summary = "\n".join(lines)
 
     st.subheader("Downloads")
     st.download_button("⬇️ Download FBA labels PDF", data=fba_pdf, file_name="fba_labels.pdf", mime="application/pdf")
     st.download_button("⬇️ Download Shipping labels PDF", data=ship_pdf, file_name="shipping_labels.pdf", mime="application/pdf")
 
     if summary_rows:
-        # Offer CSV (still available) and Text summary
         csv_bytes = to_csv_bytes(summary_rows)
         st.download_button("⬇️ Download summary CSV", data=csv_bytes, file_name="labels_summary.csv", mime="text/csv")
 
