@@ -1,10 +1,99 @@
 import io
 import re
 from dataclasses import dataclass, asdict
-from typing import List, Optional, Tuple
-
+from typing import List, Optional, Tuple, Dict
 import streamlit as st
 from pypdf import PdfReader, PdfWriter
+import pandas as pd
+
+# ---------- Google Sheets Integration ----------
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def load_packaging_data_from_sheets() -> Dict[str, dict]:
+    """
+    Load packaging data from Google Sheets.
+    Returns a dictionary mapping SKU to packaging info.
+    """
+    try:
+        # Google Sheet URL (publicly accessible)
+        sheet_url = "https://docs.google.com/spreadsheets/d/1ZsJJOt7P9bWubJk8K_ZLCZWR5Sw989P5wX4Bpu1ctDk/export?format=csv&gid=0"
+        
+        # Read the sheet
+        df = pd.read_csv(sheet_url)
+        
+        # Create dictionary mapping SKU to packaging info
+        packaging_dict = {}
+        for _, row in df.iterrows():
+            sku = row.get('TBC SKU reference', '').strip()
+            if not sku or pd.isna(sku):
+                continue
+                
+            weight = row.get('Weight per Full', None)
+            fully_enclosed = row.get('Is the Product Fully Enclosed in a Closed Carton? (Yes/No)', '').strip()
+            notes = row.get('Notes (e.g., open tray, partial lid, etc.)', '')
+            
+            # Handle weight (could be numeric or string)
+            try:
+                if pd.notna(weight):
+                    weight_val = float(str(weight).replace('kg', '').strip())
+                else:
+                    weight_val = None
+            except:
+                weight_val = None
+            
+            packaging_dict[sku] = {
+                'weight': weight_val,
+                'fully_enclosed': fully_enclosed,
+                'notes': notes if pd.notna(notes) else ''
+            }
+        
+        return packaging_dict
+    except Exception as e:
+        st.warning(f"⚠️ Could not load packaging data from Google Sheets: {e}")
+        return {}
+
+
+def determine_packaging_instruction(sku: str, packaging_data: Dict[str, dict]) -> Tuple[str, str]:
+    """
+    Determine whether to use master carton or repack into HIVE boxes.
+    Returns a tuple: (instruction_type, instruction_text)
+    
+    instruction_type: "master", "repack", or "unknown"
+    """
+    if not packaging_data or sku not in packaging_data:
+        return "unknown", "please verify packaging requirements"
+    
+    data = packaging_data[sku]
+    weight = data.get('weight')
+    fully_enclosed = str(data.get('fully_enclosed', '')).strip().lower()
+    notes = data.get('notes', '')
+    
+    # Special case: products not sent by pallet
+    if notes and 'not sent by pallet' in notes.lower():
+        return "master", "product is not sent by pallet, only by carton"
+    
+    # Handle missing weight data
+    if weight is None or pd.isna(weight):
+        return "unknown", "weight data not available - please verify with supplier"
+    
+    # Amazon requirements: must be under 10kg and fully enclosed
+    # Weight is assumed to be in grams if > 100, otherwise in kg
+    weight_kg = weight if weight <= 100 else weight / 1000
+    
+    is_fully_enclosed = fully_enclosed in ['yes', 'y', 'true', '1']
+    
+    if weight_kg <= 10 and is_fully_enclosed:
+        return "master", "please keep master carton. No need of re-boxing"
+    else:
+        # Determine reason for repacking
+        reasons = []
+        if weight_kg > 10:
+            reasons.append(f"weight is {weight_kg:.1f}kg (exceeds 10kg limit)")
+        if not is_fully_enclosed:
+            reasons.append("not fully enclosed")
+        
+        reason_text = " and ".join(reasons) if reasons else "packaging requirements"
+        return "repack", f"please pack on HIVE XL box ({reason_text})"
+
 
 # ---------- Helpers ----------
 @dataclass
@@ -131,7 +220,15 @@ def to_csv_bytes(rows: List[LabelInfo]) -> bytes:
 # ---------- UI ----------
 st.set_page_config(page_title="FBA & Shipping Labels Splitter", page_icon="📦", layout="centered")
 st.title("📦 FBA & Shipping Labels Splitter")
-st.write("Upload the single alternating-labels PDF from Amazon (FBA label, then shipping label, etc.). We'll split it into two PDFs and generate a summary.")
+st.write("Upload the single alternating-labels PDF from Amazon (FBA label, then shipping label, etc.). We'll split it into two PDFs and generate a summary with **automatic packaging instructions**.")
+
+# Load packaging data from Google Sheets
+with st.spinner("Loading packaging data from Google Sheets..."):
+    packaging_data = load_packaging_data_from_sheets()
+    if packaging_data:
+        st.success(f"✅ Loaded packaging data for {len(packaging_data)} SKUs from Google Sheets")
+    else:
+        st.warning("⚠️ Could not load packaging data. Packaging instructions will not be available.")
 
 
 with st.expander("Options", expanded=False):
@@ -139,6 +236,8 @@ with st.expander("Options", expanded=False):
     st.caption("Disable this if your input starts with a shipping label instead.")
     custom_title = st.text_input("Summary title", value="Amazon order")
     show_ids = st.multiselect("Show IDs in lines", options=["FNSKU", "ASIN", "Tracking", "Shipment ID"], default=["ASIN"])
+    include_packaging = st.checkbox("Include packaging instructions in summary", value=True)
+    st.caption("Enable to automatically add master carton or repacking instructions based on Google Sheets data")
 
 uploaded = st.file_uploader("Upload combined PDF", type=["pdf"])
 
@@ -196,8 +295,24 @@ if uploaded is not None:
             rng = f"Box {a}:"
         else:
             rng = f"Box {a}-{b}:"
-        suffix = f" / {ids}" if ids else ""
-        lines.append(f"{rng} {key}{suffix}")
+        
+        # Add packaging instructions if enabled
+        if include_packaging and packaging_data:
+            instruction_type, instruction_text = determine_packaging_instruction(key, packaging_data)
+            suffix = f" / {ids}" if ids else ""
+            
+            # Add special notes for specific products
+            special_note = ""
+            if "Trout" in key and "50" in key:
+                special_note = " Ensure that the carton picked up is the one with 90 units inside."
+            elif "Chicken" in key and "50" in key:
+                special_note = " Ensure that the carton picked up is the one with 90 units inside."
+            
+            lines.append(f"{rng} {key}{suffix} - {instruction_text}.{special_note}")
+        else:
+            suffix = f" / {ids}" if ids else ""
+            lines.append(f"{rng} {key}{suffix}")
+    
     text_summary = "\n".join(lines)
 
     st.subheader("Downloads")
@@ -208,9 +323,26 @@ if uploaded is not None:
         csv_bytes = to_csv_bytes(summary_rows)
         st.download_button("⬇️ Download summary CSV", data=csv_bytes, file_name="labels_summary.csv", mime="text/csv")
 
-        st.subheader("Text summary")
-        st.code(text_summary)
+        st.subheader("Text summary for HIVE")
+        st.code(text_summary, language=None)
         st.download_button("⬇️ Download summary TXT", data=text_summary.encode("utf-8"), file_name="labels_summary.txt", mime="text/plain")
+
+        # Show packaging breakdown
+        if include_packaging and packaging_data:
+            with st.expander("📦 Packaging Breakdown"):
+                for (a, b, key, ids) in groups:
+                    instruction_type, instruction_text = determine_packaging_instruction(key, packaging_data)
+                    if a == b:
+                        box_label = f"Box {a}"
+                    else:
+                        box_label = f"Boxes {a}-{b}"
+                    
+                    if instruction_type == "master":
+                        st.success(f"✅ {box_label}: **{key}** → Use master carton")
+                    elif instruction_type == "repack":
+                        st.warning(f"📦 {box_label}: **{key}** → Repack into HIVE boxes")
+                    else:
+                        st.info(f"❓ {box_label}: **{key}** → {instruction_text}")
 
         st.subheader("Raw data preview")
         st.dataframe([asdict(r) for r in summary_rows])
@@ -226,5 +358,26 @@ with st.sidebar:
 - **What we try to read**: FNSKU (starts with **X**), ASIN (**B**********), optional **SKU/MSKU** lines, **carton number** (like `3 of 10`), and common **tracking** formats (DHL/UPS).
 - **First page toggle**: If your file starts with a shipping label, uncheck the odd-page FBA assumption.
 - **Privacy**: Everything runs locally in your browser session when served from your machine/server.
+- **Packaging data**: Automatically loaded from your Google Sheet. Update the sheet and refresh the page to see changes.
         """
     )
+    
+    st.header("Packaging Rules")
+    st.markdown(
+        """
+**Master Carton Used When:**
+- Weight ≤ 10kg AND
+- Fully enclosed in closed carton
+
+**Repack into HIVE Boxes When:**
+- Weight > 10kg OR
+- Not fully enclosed
+        """
+    )
+    
+    if packaging_data:
+        st.header("Loaded SKUs")
+        st.caption(f"{len(packaging_data)} SKUs loaded from Google Sheets")
+        with st.expander("View SKU List"):
+            for sku in sorted(packaging_data.keys()):
+                st.text(f"• {sku}")
