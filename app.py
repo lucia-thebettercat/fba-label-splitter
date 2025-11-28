@@ -27,14 +27,28 @@ def load_packaging_data_from_sheets() -> Dict[str, dict]:
             if not sku or pd.isna(sku):
                 continue
                 
+            # Column H: Weight per Full
             weight = row.get('Weight per Full', None)
-            fully_enclosed = row.get('Is the Product Fully Enclosed in a Closed Carton? (Yes/No)', '').strip()
+            # Column L: Is the Product Fully Enclosed in a Closed Carton? (Yes/No)
+            # Try both possible column names
+            fully_enclosed = row.get('Is the Product Fully Enclosed in a Closed Carton? (Yes/No)', '')
+            if pd.isna(fully_enclosed) or not fully_enclosed:
+                # Try index-based access for column L (index 11, since columns are 0-indexed)
+                try:
+                    fully_enclosed = str(row.iloc[11]).strip() if len(row) > 11 else ''
+                except:
+                    fully_enclosed = ''
+            else:
+                fully_enclosed = str(fully_enclosed).strip()
+            
             notes = row.get('Notes (e.g., open tray, partial lid, etc.)', '')
             
             # Handle weight (could be numeric or string)
             try:
                 if pd.notna(weight):
-                    weight_val = float(str(weight).replace('kg', '').strip())
+                    # Remove any text like 'kg' or 'g' and convert to float
+                    weight_str = str(weight).replace('kg', '').replace('g', '').strip()
+                    weight_val = float(weight_str)
                 else:
                     weight_val = None
             except:
@@ -82,17 +96,9 @@ def determine_packaging_instruction(sku: str, packaging_data: Dict[str, dict]) -
     is_fully_enclosed = fully_enclosed in ['yes', 'y', 'true', '1']
     
     if weight_kg <= 10 and is_fully_enclosed:
-        return "master", "please keep master carton. No need of re-boxing"
+        return "master", "Please ship with master carton, don't repack"
     else:
-        # Determine reason for repacking
-        reasons = []
-        if weight_kg > 10:
-            reasons.append(f"weight is {weight_kg:.1f}kg (exceeds 10kg limit)")
-        if not is_fully_enclosed:
-            reasons.append("not fully enclosed")
-        
-        reason_text = " and ".join(reasons) if reasons else "packaging requirements"
-        return "repack", f"please pack on HIVE XL box ({reason_text})"
+        return "repack", "Please repack on HIVE carton, ensure that weight is under 10kg"
 
 
 # ---------- Helpers ----------
