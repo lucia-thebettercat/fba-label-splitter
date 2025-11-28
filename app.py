@@ -27,8 +27,15 @@ def load_packaging_data_from_sheets() -> Dict[str, dict]:
             if not sku or pd.isna(sku):
                 continue
                 
-            # Column H: Weight per Full
+            # Column G: Weight per Full (in kg)
+            # Try to get by column name first, then by index
             weight = row.get('Weight per Full', None)
+            if pd.isna(weight) or weight is None:
+                # Try getting column G by index (index 6, since columns are 0-indexed)
+                try:
+                    weight = row.iloc[6] if len(row) > 6 else None
+                except:
+                    weight = None
             # Column L: Is the Product Fully Enclosed in a Closed Carton? (Yes/No)
             # Try both possible column names
             fully_enclosed = row.get('Is the Product Fully Enclosed in a Closed Carton? (Yes/No)', '')
@@ -43,12 +50,11 @@ def load_packaging_data_from_sheets() -> Dict[str, dict]:
             
             notes = row.get('Notes (e.g., open tray, partial lid, etc.)', '')
             
-            # Handle weight (could be numeric or string)
+            # Handle weight (values are in kg as plain numbers)
             try:
-                if pd.notna(weight):
-                    # Remove any text like 'kg' or 'g' and convert to float
-                    weight_str = str(weight).replace('kg', '').replace('g', '').strip()
-                    weight_val = float(weight_str)
+                if pd.notna(weight) and weight != '':
+                    # Convert to float (weight is already in kg)
+                    weight_val = float(weight)
                 else:
                     weight_val = None
             except:
@@ -111,9 +117,8 @@ def determine_packaging_instruction(sku: str, packaging_data: Dict[str, dict]) -
     if weight is None or pd.isna(weight):
         return "unknown", "weight data not available - please verify with supplier"
     
-    # Amazon requirements: must be under 10kg and fully enclosed
-    # Weight is assumed to be in grams if > 100, otherwise in kg
-    weight_kg = weight if weight <= 100 else weight / 1000
+    # Weight is already in kg (Column G contains plain numbers like 1.2, 0.4, etc.)
+    weight_kg = weight
     
     is_fully_enclosed = fully_enclosed in ['yes', 'y', 'true', '1']
     
