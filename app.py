@@ -73,10 +73,32 @@ def determine_packaging_instruction(sku: str, packaging_data: Dict[str, dict]) -
     
     instruction_type: "master", "repack", or "unknown"
     """
-    if not packaging_data or sku not in packaging_data:
+    if not packaging_data:
         return "unknown", "please verify packaging requirements"
     
-    data = packaging_data[sku]
+    # First try exact match
+    if sku in packaging_data:
+        data = packaging_data[sku]
+    else:
+        # Try fuzzy matching - remove suffixes like -1, -2, etc.
+        base_sku = sku.rsplit('-', 1)[0] if '-' in sku else sku
+        
+        # Look for matches
+        matched_data = None
+        for sheet_sku, sheet_data in packaging_data.items():
+            # Check if base SKU matches or if sheet SKU is contained in the PDF SKU
+            if base_sku == sheet_sku or sheet_sku in sku or sku.startswith(sheet_sku):
+                matched_data = sheet_data
+                break
+            # Special case for "TBC_Other_Stanley" - match any variant
+            if "TBC_Other_Stanley" in sheet_sku and "TBC_Other_Stanley" in sku:
+                matched_data = sheet_data
+                break
+        
+        if not matched_data:
+            return "unknown", "please verify packaging requirements"
+        
+        data = matched_data
     weight = data.get('weight')
     fully_enclosed = str(data.get('fully_enclosed', '')).strip().lower()
     notes = data.get('notes', '')
