@@ -84,7 +84,11 @@ def determine_packaging_instruction(sku: str, packaging_data: Dict[str, dict]) -
     
     # SKU mapping: Convert certain SKU variants to their canonical versions
     sku_mapping = {
+        # Amazon FNSKU mappings
+        'NH-H4RM-DYZ': 'TBC_WF_Chicken_2_1200',
+        # 1_595 variant mappings
         'TBC_WF_Chicken_1_595': 'TBC_WF_Chicken_2_1020',
+        'TBC_WF_Beef_1_595': 'TBC_WF_Beef_2_1020',
         'TBC_WF_Chicken & Trout_1_595': 'TBC_WF_Chicken & Trout_2_1020',
     }
     
