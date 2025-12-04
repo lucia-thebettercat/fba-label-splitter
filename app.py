@@ -85,9 +85,9 @@ def determine_packaging_instruction(sku: str, packaging_data: Dict[str, dict]) -
     # SKU mapping: Convert certain SKU variants to their canonical versions
     sku_mapping = {
         # Amazon FNSKU mappings
-        'NH-H4RM-DYZ': 'TBC_WF_Chicken_2_1200',
+        'NH-H4RM-DYZ8': 'TBC_WF_Chicken_2_1200',
         # 1_595 variant mappings
-        'TBC_WF_Chicken_1_595': 'TBC_WF_Chicken_2_1020',
+        'TBC_WF_Chicken': 'TBC_WF_Chicken_2_1020',
         'TBC_WF_Beef_1_595': 'TBC_WF_Beef_2_1020',
         'TBC_WF_Chicken & Trout_1_595': 'TBC_WF_Chicken & Trout_2_1020',
     }
@@ -320,6 +320,20 @@ if uploaded is not None:
 
     def label_key(row):
         sku = row.sku or row.fnsku or row.asin or "(Unknown)"
+        
+        # Apply SKU mapping first (same mapping as in determine_packaging_instruction)
+        sku_mapping = {
+            # Amazon FNSKU mappings
+            'NH-H4RM-DYZ8': 'TBC_WF_Chicken_2_1200',
+            # 1_595 variant mappings
+            'TBC_WF_Chicken': 'TBC_WF_Chicken_2_1020',
+            'TBC_WF_Beef_1_595': 'TBC_WF_Beef_2_1020',
+            'TBC_WF_Chicken & Trout_1_595': 'TBC_WF_Chicken & Trout_2_1020',
+        }
+        
+        if sku in sku_mapping:
+            sku = sku_mapping[sku]
+        
         # Clean up SKU by removing suffixes like -1, -2, etc.
         if sku and '-' in sku and sku != "(Unknown)":
             # Check if last part after dash is just a number
